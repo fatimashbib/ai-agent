@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+
 import './styles.css';
 
 export default function Assessment() {
@@ -86,7 +87,7 @@ export default function Assessment() {
                       <input
                         type="radio"
                         name={`q${i}`}
-                  checked={answers[q.id] === j}
+                        checked={answers[q.id] === j}
                         onChange={() => setAnswers({ ...answers, [q.id]: j })}
                       />
                       {opt}
@@ -119,7 +120,7 @@ export default function Assessment() {
           </div>
           <div className="feedback">
             <h3>Feedback</h3>
-            <p>{results.feedback}</p>
+           <p>{results.feedback}</p>
           </div>
         </div>
       )}
