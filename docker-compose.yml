@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - db_data:/app/db
+      - model_data:/app/scoring_models  # For persisting ML models
+    environment:
+      - DATABASE_URL=sqlite:////app/db/ai-agent.db
+      - DEEPSEEK_API_KEY=sk-c2f1f20e654441eb8ba47f51ce683c40  # From .env file
+      - ML_MODEL_PATH=/app/scoring_models/scoring_model.joblib
+    working_dir: /app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Isolate node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  model_data:  # New volume for ML models
