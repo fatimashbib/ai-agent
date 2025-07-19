@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-
+import ReactMarkdown from 'react-markdown';
 import './styles.css';
 
 export default function Assessment() {
@@ -118,10 +118,24 @@ export default function Assessment() {
             <h3>AI-Evaluated Score</h3>
             <div className="score-value">{results.ml_based.score.toFixed(1)}/10</div>
           </div>
-          <div className="feedback">
-            <h3>Feedback</h3>
-           <p>{results.feedback}</p>
-          </div>
+          {results.feedback && (
+            <div className="feedback">
+              <h3>Overview</h3>
+              <p>{results.feedback.overview}</p>
+
+              <h3>Strengths</h3>
+              <ul>
+                {results.feedback.strengths.map((point, i) => <li key={i}>{point}</li>)}
+              </ul>
+
+              <h3>Areas for Improvement</h3>
+              <ul>
+                {results.feedback.improvements.map((point, i) => <li key={i}>{point}</li>)}
+              </ul>
+            </div>
+          )}
+
+
         </div>
       )}
     </div>

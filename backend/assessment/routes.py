@@ -19,7 +19,7 @@ from assessment.models.test import Test
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)  # or DEBUG for more details
+logging.basicConfig(level=logging.INFO)
 
 router = APIRouter(
     tags=["assessment"],
@@ -39,7 +39,7 @@ class Question(BaseModel):
     id: int
     text: str
     options: List[str]
-    correct_index: int  # add this
+    correct_index: int
     explanation: Optional[str] = None
 
 
@@ -48,15 +48,22 @@ class TestResponse(BaseModel):
     test_id: int
 
 
-class EvaluationRequest(BaseModel):
-    test_id: int
-    answers: Dict[str, int]  # Fix: string keys
+class StructuredFeedback(BaseModel):
+    overview: str
+    strengths: List[str]
+    improvements: List[str]
+
 
 class EvaluationResponse(BaseModel):
     rule_based: Dict[str, float]
     ml_based: Dict[str, float]
-    feedback: str
+    feedback: StructuredFeedback
     detailed_feedback: Optional[Dict[int, str]] = None
+
+
+class EvaluationRequest(BaseModel):
+    test_id: int
+    answers: Dict[str, int]
 
 
 def extract_json_from_string(text: str) -> Optional[str]:
@@ -75,26 +82,23 @@ async def generate_test(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    
     if not OPENROUTER_API_KEY:
         logger.error("OPENROUTER_API_KEY is not set in environment variables!")
         raise HTTPException(
             status_code=500,
             detail="OpenRouter API key is not configured"
         )
-    
-    # Import User model here to avoid circular imports if any
     from auth.models import User
     user = db.query(User).filter(User.email == current_user["username"]).first()
     if not user:
         logger.error(f"User not found: {current_user['username']}")
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
-    
+
     payload = {
         "model": "qwen/qwen-2.5-72b-instruct:free",
         "messages": [{"role": "user", "content": CRITICAL_THINKING_PROMPT}],
@@ -103,7 +107,7 @@ async def generate_test(
     }
 
     logger.info(f"Sending payload to OpenRouter:\n{json.dumps(payload, indent=2)}")
-    
+
     try:
         response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
         logger.info(f"OpenRouter response status code: {response.status_code}")
@@ -111,18 +115,17 @@ async def generate_test(
     except requests.exceptions.RequestException as e:
         logger.error(f"Request to OpenRouter failed: {e}")
         raise HTTPException(status_code=502, detail="Failed to communicate with OpenRouter API")
-    
+
     if response.status_code != 200:
         logger.error(f"OpenRouter API returned error status: {response.status_code}")
         raise HTTPException(status_code=response.status_code, detail="OpenRouter API error")
-    
+
     try:
         data = response.json()
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON response: {e}")
         raise HTTPException(status_code=422, detail="Invalid JSON response from OpenRouter")
-    
-    # Extract JSON string inside the content field
+
     try:
         content_str = data["choices"][0]["message"]["content"]
         logger.info(f"Raw OpenRouter content:\n{content_str}")
@@ -135,11 +138,11 @@ async def generate_test(
     except (KeyError, IndexError, json.JSONDecodeError, ValueError) as e:
         logger.error(f"Response content missing or malformed: {e}")
         raise HTTPException(status_code=422, detail="Malformed response content from OpenRouter")
-    
+
     if not isinstance(content_json.get("questions"), list):
         logger.error(f"Questions field missing or not a list in response: {content_json}")
         raise HTTPException(status_code=422, detail="Invalid questions format in response")
-    
+
     questions = []
     for idx, q in enumerate(content_json["questions"], 1):
         if not all(k in q for k in ["text", "options", "correct_index"]):
@@ -149,11 +152,10 @@ async def generate_test(
             id=idx,
             text=q["text"],
             options=q["options"],
-            correct_index=q["correct_index"],  # <--- add this!
+            correct_index=q["correct_index"],
             explanation=q.get("explanation", "")
         ))
-    
-    # Save test in DB
+
     try:
         test = Test(
             user_id=user.id,
@@ -166,20 +168,24 @@ async def generate_test(
         db.rollback()
         logger.error(f"Failed to save test in database: {e}")
         raise HTTPException(status_code=500, detail="Failed to save test")
-    
+
     logger.info(f"Test generated successfully with ID: {test.id}")
-    
+
     return TestResponse(
         questions=questions,
         test_id=test.id,
     )
 
-async def generate_ai_feedback(rule_score: float, ml_score: float, questions: List[dict], answers: Dict[int, int]) -> str:
+
+async def generate_ai_feedback(rule_score: float, ml_score: float, questions: List[dict], answers: Dict[int, int]) -> dict:
     if not OPENROUTER_API_KEY:
         logger.error("OpenRouter API key is not configured")
-        return "Feedback service currently unavailable."
+        return {
+            "overview": "Feedback service currently unavailable.",
+            "strengths": [],
+            "improvements": []
+        }
 
-    # Create a contextual breakdown of each question
     question_summaries = ""
     for q in questions:
         qid = q["id"]
@@ -196,7 +202,16 @@ async def generate_ai_feedback(rule_score: float, ml_score: float, questions: Li
         )
 
     prompt = f"""
-You are an expert educational psychologist. Based on the test results, generate a detailed, clear, and constructive feedback report on a test taker's critical thinking skills.
+You are an expert educational psychologist. Based on the test results, return JSON-formatted structured feedback (not Markdown or prose).
+
+Instructions:
+Return the following keys in a single JSON object:
+
+- "overview": A one-paragraph summary of the student's critical thinking skills.
+- "strengths": A list of 3-5 bullet points.
+- "improvements": A list of 3-5 bullet points.
+
+Do not include any explanations, markdown formatting, or extra text outside of the JSON object.
 
 Scores:
 - Rule-based score: {rule_score} out of 100
@@ -204,14 +219,6 @@ Scores:
 
 Details:
 {question_summaries}
-
-Feedback should include:
-1. Overview of overall performance
-2. Strengths (numbered bullets)
-3. Areas for improvement (numbered bullets)
-4. Format in markdown
-
-Be encouraging and insightful.
 """
 
     payload = {
@@ -222,15 +229,30 @@ Be encouraging and insightful.
     }
 
     try:
-        response = requests.post(OPENROUTER_URL, headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
-        }, json=payload, timeout=30)
+        response = requests.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=30
+        )
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+        content = response.json()["choices"][0]["message"]["content"]
+        json_str = extract_json_from_string(content)
+        if not json_str:
+            raise ValueError("No JSON object found in AI response")
+        structured_feedback = json.loads(json_str)
+        return structured_feedback
     except Exception as e:
         logger.error(f"Failed to generate AI feedback: {e}", exc_info=True)
-        return "Could not generate AI feedback at this time. Please try again later."
+        return {
+            "overview": "Could not generate AI feedback at this time. Please try again later.",
+            "strengths": [],
+            "improvements": []
+        }
+
 
 @router.post("/evaluate-test", response_model=EvaluationResponse)
 async def evaluate_test(
@@ -283,7 +305,7 @@ async def evaluate_test(
         test.answers = int_answers
         test.rule_based_score = rule_score
         test.ml_based_score = ml_score
-        test.feedback = ai_feedback
+        test.feedback = json.dumps(ai_feedback)  # store as JSON string if your DB expects string
         test.completed_at = datetime.utcnow()
 
         db.commit()
@@ -300,7 +322,7 @@ async def evaluate_test(
                 "max": 10,
                 "percentage": round(ml_score * 10, 1),
             },
-            feedback=ai_feedback,
+            feedback=ai_feedback,  # <-- structured dict here
             detailed_feedback=detailed_feedback
         )
 
