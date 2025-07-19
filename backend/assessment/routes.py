@@ -10,7 +10,7 @@ from database.session import get_db
 from auth.security import get_current_user
 import json
 import os
-from models.test import Test  # Make sure you have this import for your Test model
+from assessment.models.test import Test
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
