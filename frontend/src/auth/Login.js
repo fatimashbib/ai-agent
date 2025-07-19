@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
   const [formData, setFormData] = useState({
@@ -9,6 +10,7 @@ export default function Login() {
   const [message, setMessage] = useState({ text: '', isError: false });
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const handleChange = (e) => {
     setFormData({
@@ -42,8 +44,7 @@ export default function Login() {
       }
 
       const data = await response.json();
-      localStorage.setItem('token', data.access_token);
-      localStorage.setItem('user_email', data.user_email);
+      login({ email: formData.email }, data.access_token);
       
       setMessage({ text: 'Login successful! Redirecting...', isError: false });
       setTimeout(() => navigate('/dashboard'), 1000);

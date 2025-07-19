@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import './styles.css';
 
 export default function Assessment() {
@@ -7,22 +8,31 @@ export default function Assessment() {
   const [answers, setAnswers] = useState({});
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
-  const { user } = useAuth();
+  const [testId, setTestId] = useState(null); // <-- Added testId state
+  const { token } = useAuth();
+  const navigate = useNavigate();
+
+  if (!token) {
+    navigate('/login');
+    return null;
+  }
 
   const generateTest = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/assessment/generate-test', {
+      const response = await fetch('http://localhost:8000/assessment/generate-test', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${user.token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
+      if (!response.ok) throw new Error('Failed to generate test');
       const data = await response.json();
       setQuestions(data.questions);
       setAnswers({});
       setResults(null);
+      setTestId(data.test_id); // <-- Save test_id from response
     } catch (err) {
       console.error('Failed to generate test:', err);
     } finally {
@@ -33,14 +43,19 @@ export default function Assessment() {
   const submitTest = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/assessment/evaluate-test', {
+      const response = await fetch('http://localhost:8000/assessment/evaluate-test', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${user.token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ answers })
+        credentials: 'include',
+        body: JSON.stringify({
+          test_id: testId,   // <-- Include test_id in request body
+          answers: answers
+        })
       });
+      if (!response.ok) throw new Error('Failed to submit test');
       setResults(await response.json());
     } catch (err) {
       console.error('Failed to submit test:', err);
@@ -52,7 +67,7 @@ export default function Assessment() {
   return (
     <div className="assessment-container">
       {questions.length === 0 ? (
-        <button 
+        <button
           onClick={generateTest}
           disabled={loading}
           className="generate-btn"
@@ -64,15 +79,15 @@ export default function Assessment() {
           <div className="questions-section">
             {questions.map((q, i) => (
               <div key={i} className="question-card">
-                <h3>Question {i+1}: {q.text}</h3>
+                <h3>Question {i + 1}: {q.text}</h3>
                 <div className="options">
                   {q.options.map((opt, j) => (
                     <label key={j} className="option">
                       <input
                         type="radio"
                         name={`q${i}`}
-                        checked={answers[i] === j}
-                        onChange={() => setAnswers({...answers, [i]: j})}
+                  checked={answers[q.id] === j}
+                        onChange={() => setAnswers({ ...answers, [q.id]: j })}
                       />
                       {opt}
                     </label>
@@ -81,7 +96,7 @@ export default function Assessment() {
               </div>
             ))}
           </div>
-          <button 
+          <button
             onClick={submitTest}
             disabled={loading || Object.keys(answers).length < questions.length}
             className="submit-btn"
@@ -90,7 +105,7 @@ export default function Assessment() {
           </button>
         </>
       )}
-      
+
       {results && (
         <div className="results-section">
           <h2>Your Results</h2>

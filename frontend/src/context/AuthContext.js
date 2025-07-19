@@ -1,10 +1,18 @@
-import { createContext, useState, useContext } from 'react';
+import { createContext, useState, useContext, useEffect } from 'react';
 
 export const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('token') || null);
+
+  useEffect(() => {
+    // Check for token on initial load
+    const storedToken = localStorage.getItem('token');
+    if (storedToken) {
+      setToken(storedToken);
+    }
+  }, []);
 
   const login = (userData, authToken) => {
     localStorage.setItem('token', authToken);
@@ -25,7 +33,6 @@ export function AuthProvider({ children }) {
   );
 }
 
-// Add this custom hook export
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {
