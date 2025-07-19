@@ -41,3 +41,5 @@ response = requests.post(url, headers=headers, json=payload)
 
 print(response.status_code)
 print(response.json())
+
+# https://openrouter.ai/settings/keys

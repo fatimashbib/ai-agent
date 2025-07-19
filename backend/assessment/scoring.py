@@ -11,26 +11,28 @@ class Scorer:
             self.model = load(MODEL_PATH)
             print(f"Loaded model from {MODEL_PATH}")
         else:
-            self.model = RandomForestRegressor(random_state=42)
+            self.model = RandomForestRegressor(random_state=42, n_estimators=100)
             self._initial_train()
     
     def _initial_train(self):
         # ======= Synthetic training data =======
-        # Features columns:
+        # Features:
         # [question text length, answered correctly (0/1), number of options, explanation length, question index]
+# Add more "wrong answer" examples with low scores
         X_train = np.array([
-            [50, 1, 4, 30, 0],   # Easy question, correct answer -> high score
-            [120, 0, 5, 50, 1],  # Long question, wrong answer -> low score
-            [90, 1, 3, 40, 2],   # Medium question, correct answer -> medium-high score
-            [60, 0, 4, 20, 3],   # Short question, wrong answer -> low score
-            [80, 1, 4, 25, 4],   # Correct answer again -> high score
-            [110, 0, 5, 45, 5],  # Wrong answer -> low score
-            [70, 1, 3, 35, 6],   # Correct answer -> high score
-            [55, 0, 4, 15, 7],   # Wrong answer -> low score
+            [80, 1, 4, 35, 0],   # Correct
+            [90, 1, 4, 45, 1],
+            [75, 1, 3, 30, 2],
+            [85, 1, 4, 40, 3],
+            [95, 0, 4, 35, 4],   # Wrong with explanation
+            [70, 0, 3, 20, 5],   # Wrong, short
+            [100, 0, 5, 50, 6],  # Wrong, long explanation (shouldn't get high score)
+            [60, 0, 4, 25, 7],
+            [100, 0, 4, 60, 8],  # Another bad case
+            [85, 0, 4, 20, 9],
         ])
+        y_train = np.array([9, 9, 8, 9, 4, 2, 3, 2, 2, 3])
 
-        # Labels: synthetic scores (0-10 scale)
-        y_train = np.array([9, 3, 8, 2, 9, 3, 8, 2])
 
         self.model.fit(X_train, y_train)
         dump(self.model, MODEL_PATH)
@@ -79,23 +81,26 @@ class Scorer:
         """
         features = []
         for q_idx, q in enumerate(questions):
-            features.append([
+            feat = [
                 len(q['text']),
                 int(answers.get(q['id'], -1) == q['correct_index']),
                 len(q['options']),
                 len(q.get('explanation', '')),
                 q_idx
-            ])
+            ]
+            features.append(feat)
+
+        print("Features for prediction:", features)
         preds = self.model.predict(features)
+        print("Predicted scores per question:", preds)
         avg_score = preds.mean()
         return avg_score
 
 
 if __name__ == "__main__":
-    # Example usage
     scorer = Scorer()
 
-    # Example new training data for retraining (must be numpy arrays)
+    # Example new training data for retraining
     X_new = np.array([
         [65, 1, 4, 20, 0],
         [90, 0, 5, 40, 1],
@@ -104,7 +109,6 @@ if __name__ == "__main__":
     ])
     y_new = np.array([8, 4, 7, 9])
 
-    # Retrain model with new data
     scorer.retrain(X_new, y_new)
 
     # Example questions & answers for scoring

@@ -75,6 +75,7 @@ async def generate_test(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    
     if not OPENROUTER_API_KEY:
         logger.error("OPENROUTER_API_KEY is not set in environment variables!")
         raise HTTPException(
@@ -173,6 +174,63 @@ async def generate_test(
         test_id=test.id,
     )
 
+async def generate_ai_feedback(rule_score: float, ml_score: float, questions: List[dict], answers: Dict[int, int]) -> str:
+    if not OPENROUTER_API_KEY:
+        logger.error("OpenRouter API key is not configured")
+        return "Feedback service currently unavailable."
+
+    # Create a contextual breakdown of each question
+    question_summaries = ""
+    for q in questions:
+        qid = q["id"]
+        user_answer = answers.get(qid, -1)
+        correct = q["correct_index"]
+        is_correct = user_answer == correct
+        explanation = q.get("explanation", "No explanation provided.")
+        question_summaries += (
+            f"\n\nQ{qid}: {q['text']}\n"
+            f"- User Answer: {q['options'][user_answer] if 0 <= user_answer < len(q['options']) else 'Invalid'}\n"
+            f"- Correct Answer: {q['options'][correct]}\n"
+            f"- Explanation: {explanation}\n"
+            f"- Result: {'Correct' if is_correct else 'Incorrect'}"
+        )
+
+    prompt = f"""
+You are an expert educational psychologist. Based on the test results, generate a detailed, clear, and constructive feedback report on a test taker's critical thinking skills.
+
+Scores:
+- Rule-based score: {rule_score} out of 100
+- ML-based score: {ml_score} out of 10
+
+Details:
+{question_summaries}
+
+Feedback should include:
+1. Overview of overall performance
+2. Strengths (numbered bullets)
+3. Areas for improvement (numbered bullets)
+4. Format in markdown
+
+Be encouraging and insightful.
+"""
+
+    payload = {
+        "model": "qwen/qwen-2.5-72b-instruct:free",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7,
+        "max_tokens": 800
+    }
+
+    try:
+        response = requests.post(OPENROUTER_URL, headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        }, json=payload, timeout=30)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logger.error(f"Failed to generate AI feedback: {e}", exc_info=True)
+        return "Could not generate AI feedback at this time. Please try again later."
 
 @router.post("/evaluate-test", response_model=EvaluationResponse)
 async def evaluate_test(
@@ -186,13 +244,12 @@ async def evaluate_test(
     if not user:
         logger.error(f"User not found: {current_user['username']}")
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     test = db.query(Test).filter(
         Test.id == request.test_id,
         Test.user_id == user.id
     ).first()
-    
-    print(test.questions)
+
     if not test:
         logger.error(f"Test not found or access denied: {request.test_id}")
         raise HTTPException(status_code=404, detail="Test not found or access denied")
@@ -219,11 +276,14 @@ async def evaluate_test(
             for q in test.questions
         }
 
+        logger.info("Generating AI feedback")
+        ai_feedback = await generate_ai_feedback(rule_score, ml_score, test.questions, int_answers)
+
         logger.info("Updating test record with evaluation results")
         test.answers = int_answers
         test.rule_based_score = rule_score
         test.ml_based_score = ml_score
-        test.feedback = generate_feedback(rule_score, ml_score)
+        test.feedback = ai_feedback
         test.completed_at = datetime.utcnow()
 
         db.commit()
@@ -233,14 +293,14 @@ async def evaluate_test(
             rule_based={
                 "score": round(rule_score, 1),
                 "max": 100,
-                "percentage": round(rule_score, 1),  # float, no '%'
+                "percentage": round(rule_score, 1),
             },
             ml_based={
                 "score": round(ml_score, 1),
                 "max": 10,
-                "percentage": round(ml_score * 10, 1),  # float, no '%'
+                "percentage": round(ml_score * 10, 1),
             },
-            feedback=generate_feedback(rule_score, ml_score),
+            feedback=ai_feedback,
             detailed_feedback=detailed_feedback
         )
 
@@ -248,18 +308,3 @@ async def evaluate_test(
         db.rollback()
         logger.error(f"Evaluation failed: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail="Evaluation failed due to invalid data")
-
-def generate_feedback(rule_score: float, ml_score: float) -> str:
-    if rule_score > 85 and ml_score > 8.5:
-        return ("Excellent critical thinking skills! You demonstrated strong "
-                "analytical abilities and logical reasoning.")
-    elif rule_score > 70:
-        return ("Good performance. You show solid critical thinking skills "
-                "with some areas for improvement in deeper analysis.")
-    elif rule_score > 50:
-        return ("Developing critical thinking skills. Focus on evaluating "
-                "arguments more systematically and considering alternative "
-                "perspectives.")
-    else:
-        return ("Needs improvement. Practice identifying assumptions, "
-                "evaluating evidence, and constructing logical arguments.")
