@@ -18,6 +18,8 @@ from auth.security import get_current_user
 from assessment.models.test import Test
 from dotenv import load_dotenv
 
+
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -76,6 +78,39 @@ def extract_json_from_string(text: str) -> Optional[str]:
         return json_match.group(0)
     return None
 
+
+# Add this new model for the response
+class TestHistoryItem(BaseModel):
+    id: int
+    rule_based_score: float
+    ml_based_score: float
+
+class TestHistoryResponse(BaseModel):
+    tests: List[TestHistoryItem]
+
+@router.get("/test-history", response_model=TestHistoryResponse)
+async def get_test_history(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get basic history of completed tests (without questions/answers)"""
+    from auth.models import User
+    user = db.query(User).filter(User.email == current_user["username"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    tests = db.query(Test).filter(
+        Test.user_id == user.id,
+        Test.rule_based_score.isnot(None)  # Only return completed tests
+    ).all()
+
+    return TestHistoryResponse(
+        tests=[TestHistoryItem(
+            id=test.id,
+            rule_based_score=test.rule_based_score,
+            ml_based_score=test.ml_based_score
+        ) for test in tests]
+    )
 
 @router.post("/generate-test", response_model=TestResponse)
 async def generate_test(
@@ -330,3 +365,4 @@ async def evaluate_test(
         db.rollback()
         logger.error(f"Evaluation failed: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail="Evaluation failed due to invalid data")
+

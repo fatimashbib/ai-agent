@@ -16,7 +16,7 @@ export default function App() {
 
           <Route path="/" element={
 
-            <Dashboard />
+            <Assessment />
 
           } />
           <Route path="/assessment" element={

@@ -47,7 +47,7 @@ export default function Login() {
       login({ email: formData.email }, data.access_token);
       
       setMessage({ text: 'Login successful! Redirecting...', isError: false });
-      setTimeout(() => navigate('/dashboard'), 1000);
+      setTimeout(() => navigate('/assessment'), 1000);
 
     } catch (err) {
       console.error('Login error:', err);
