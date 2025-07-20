@@ -3,15 +3,15 @@ import json
 import os
 import logging
 from datetime import datetime
-from typing import Optional, Dict, List
-
+from typing import Optional, Dict, List,Any
+from sqlalchemy import desc
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from .scoring import Scorer
+from .scoring import Scorer, StrengthEvaluator
 from .prompts import CRITICAL_THINKING_PROMPT
 from database.session import get_db
 from auth.security import get_current_user
@@ -29,13 +29,13 @@ router = APIRouter(
 )
 
 load_dotenv()
+strength_evaluator = StrengthEvaluator()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 scorer = Scorer()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-
 
 class Question(BaseModel):
     id: int
@@ -44,56 +44,54 @@ class Question(BaseModel):
     correct_index: int
     explanation: Optional[str] = None
 
-
 class TestResponse(BaseModel):
     questions: List[Question]
     test_id: int
-
 
 class StructuredFeedback(BaseModel):
     overview: str
     strengths: List[str]
     improvements: List[str]
 
+class ScoreDetails(BaseModel):
+    value: float
+    max: float = 100.0
+    percentage: float
+    rule_based_strength: str  # "Strong", "Moderate", "Weak"
+    ml_based_strength: str    # "Strong", "Moderate", "Weak"
 
 class EvaluationResponse(BaseModel):
-    rule_based: Dict[str, float]
-    ml_based: Dict[str, float]
+    score: ScoreDetails
     feedback: StructuredFeedback
     detailed_feedback: Optional[Dict[int, str]] = None
-
 
 class EvaluationRequest(BaseModel):
     test_id: int
     answers: Dict[str, int]
 
+class TestHistoryItem(BaseModel):
+    id: int
+    score: float
+    rule_based_strength: str
+    ml_based_strength: str
+    created_at: datetime
+    completed_at: datetime
+    feedback: Optional[Dict[str, Any]] = None
+
+class TestHistoryResponse(BaseModel):
+    tests: List[TestHistoryItem]
 
 def extract_json_from_string(text: str) -> Optional[str]:
-    """
-    Extract the first JSON object from a text string.
-    Uses balanced braces recursion pattern.
-    """
     json_match = re.search(r"\{(?:[^{}]|(?R))*\}", text, re.DOTALL)
     if json_match:
         return json_match.group(0)
     return None
-
-
-# Add this new model for the response
-class TestHistoryItem(BaseModel):
-    id: int
-    rule_based_score: float
-    ml_based_score: float
-
-class TestHistoryResponse(BaseModel):
-    tests: List[TestHistoryItem]
 
 @router.get("/test-history", response_model=TestHistoryResponse)
 async def get_test_history(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get basic history of completed tests (without questions/answers)"""
     from auth.models import User
     user = db.query(User).filter(User.email == current_user["username"]).first()
     if not user:
@@ -101,15 +99,22 @@ async def get_test_history(
 
     tests = db.query(Test).filter(
         Test.user_id == user.id,
-        Test.rule_based_score.isnot(None)  # Only return completed tests
-    ).all()
+        Test.score.isnot(None)
+    ).order_by(desc(Test.created_at)).all()
 
     return TestHistoryResponse(
-        tests=[TestHistoryItem(
-            id=test.id,
-            rule_based_score=test.rule_based_score,
-            ml_based_score=test.ml_based_score
-        ) for test in tests]
+        tests=[
+            TestHistoryItem(
+                id=test.id,
+                score=test.score,
+                rule_based_strength=test.rule_based_strength,
+                ml_based_strength=test.ml_based_strength,
+                created_at=test.created_at,
+                completed_at=test.completed_at,
+                feedback=json.loads(test.feedback) if test.feedback else None
+            )
+            for test in tests
+        ]
     )
 
 @router.post("/generate-test", response_model=TestResponse)
@@ -135,7 +140,7 @@ async def generate_test(
     }
 
     payload = {
-        "model": "qwen/qwen-2.5-72b-instruct:free",
+        "model": "openai/gpt-3.5-turbo",
         "messages": [{"role": "user", "content": CRITICAL_THINKING_PROMPT}],
         "temperature": 0.7,
         "max_tokens": 2000
@@ -195,6 +200,7 @@ async def generate_test(
         test = Test(
             user_id=user.id,
             questions=[q.dict() for q in questions],
+            created_at= datetime.utcnow(),
         )
         db.add(test)
         db.commit()
@@ -212,9 +218,8 @@ async def generate_test(
     )
 
 
-async def generate_ai_feedback(rule_score: float, ml_score: float, questions: List[dict], answers: Dict[int, int]) -> dict:
+async def generate_ai_feedback(score: float, questions: List[dict], answers: Dict[int, int]) -> dict:
     if not OPENROUTER_API_KEY:
-        logger.error("OpenRouter API key is not configured")
         return {
             "overview": "Feedback service currently unavailable.",
             "strengths": [],
@@ -226,42 +231,27 @@ async def generate_ai_feedback(rule_score: float, ml_score: float, questions: Li
         qid = q["id"]
         user_answer = answers.get(qid, -1)
         correct = q["correct_index"]
-        is_correct = user_answer == correct
         explanation = q.get("explanation", "No explanation provided.")
         question_summaries += (
             f"\n\nQ{qid}: {q['text']}\n"
             f"- User Answer: {q['options'][user_answer] if 0 <= user_answer < len(q['options']) else 'Invalid'}\n"
             f"- Correct Answer: {q['options'][correct]}\n"
             f"- Explanation: {explanation}\n"
-            f"- Result: {'Correct' if is_correct else 'Incorrect'}"
+            f"- Result: {'Correct' if user_answer == correct else 'Incorrect'}"
         )
 
     prompt = f"""
-You are an expert educational psychologist. Based on the test results, return JSON-formatted structured feedback (not Markdown or prose).
+You are an expert educational psychologist. Return JSON-formatted structured feedback:
 
-Instructions:
-Return the following keys in a single JSON object:
+{{
+    "overview": "summary of critical thinking skills",
+    "strengths": ["strength1", "strength2"],
+    "improvements": ["improvement1", "improvement2"]
+}}
 
-- "overview": A one-paragraph summary of the student's critical thinking skills.
-- "strengths": A list of 3-5 bullet points.
-- "improvements": A list of 3-5 bullet points.
-
-Do not include any explanations, markdown formatting, or extra text outside of the JSON object.
-
-Scores:
-- Rule-based score: {rule_score} out of 100
-- ML-based score: {ml_score} out of 10
-
-Details:
-{question_summaries}
+Score: {score} out of 100
+Details: {question_summaries}
 """
-
-    payload = {
-        "model": "qwen/qwen-2.5-72b-instruct:free",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.7,
-        "max_tokens": 800
-    }
 
     try:
         response = requests.post(
@@ -270,20 +260,26 @@ Details:
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json"
             },
-            json=payload,
+            json={
+                "model": "openai/gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": 800
+            },
             timeout=30
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
         json_str = extract_json_from_string(content)
-        if not json_str:
-            raise ValueError("No JSON object found in AI response")
-        structured_feedback = json.loads(json_str)
-        return structured_feedback
+        return json.loads(json_str) if json_str else {
+            "overview": "Could not parse feedback",
+            "strengths": [],
+            "improvements": []
+        }
     except Exception as e:
-        logger.error(f"Failed to generate AI feedback: {e}", exc_info=True)
+        logger.error(f"Failed to generate AI feedback: {e}")
         return {
-            "overview": "Could not generate AI feedback at this time. Please try again later.",
+            "overview": "Feedback generation failed",
             "strengths": [],
             "improvements": []
         }
@@ -295,74 +291,51 @@ async def evaluate_test(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    logger.info(f"Evaluating test ID: {request.test_id}")
     from auth.models import User
     user = db.query(User).filter(User.email == current_user["username"]).first()
     if not user:
-        logger.error(f"User not found: {current_user['username']}")
         raise HTTPException(status_code=404, detail="User not found")
 
     test = db.query(Test).filter(
         Test.id == request.test_id,
         Test.user_id == user.id
     ).first()
-
     if not test:
-        logger.error(f"Test not found or access denied: {request.test_id}")
-        raise HTTPException(status_code=404, detail="Test not found or access denied")
+        raise HTTPException(status_code=404, detail="Test not found")
 
     try:
         int_answers = {int(k): v for k, v in request.answers.items()}
+        score = scorer.calculate_score(test.questions, int_answers)
+        
+        duration = (datetime.utcnow() - test.created_at).total_seconds() if test.created_at else 600
+        rule_strength = strength_evaluator.predict_rule_strength(score, duration)
+        ml_strength = strength_evaluator.predict_ml_strength(score, duration)
 
-        for qid, ans_idx in int_answers.items():
-            question = next((q for q in test.questions if q["id"] == qid), None)
-            if question is None:
-                raise ValueError(f"Question ID {qid} not found in test")
-            if not (0 <= ans_idx < len(question["options"])):
-                raise ValueError(f"Answer index {ans_idx} out of range for question ID {qid}")
+        ai_feedback = await generate_ai_feedback(score, test.questions, int_answers)
 
-        logger.info("Calculating scores")
-        rule_score = scorer.rule_based_score(test.questions, int_answers)
-        ml_score = scorer.ml_based_score(test.questions, int_answers)
-
-        detailed_feedback = {
-            q["id"]: (
-                f"Your answer: {q['options'][int_answers.get(q['id'], -1)]}. "
-                f"Correct answer: {q['options'][q['correct_index']]}"
-            )
-            for q in test.questions
-        }
-
-        logger.info("Generating AI feedback")
-        ai_feedback = await generate_ai_feedback(rule_score, ml_score, test.questions, int_answers)
-
-        logger.info("Updating test record with evaluation results")
         test.answers = int_answers
-        test.rule_based_score = rule_score
-        test.ml_based_score = ml_score
-        test.feedback = json.dumps(ai_feedback)  # store as JSON string if your DB expects string
+        test.score = score
+        test.rule_based_strength = rule_strength
+        test.ml_based_strength = ml_strength
+        test.feedback = json.dumps(ai_feedback)
         test.completed_at = datetime.utcnow()
-
         db.commit()
 
-        logger.info(f"Successfully evaluated test ID: {test.id}")
         return EvaluationResponse(
-            rule_based={
-                "score": round(rule_score, 1),
+            score={
+                "value": score,
                 "max": 100,
-                "percentage": round(rule_score, 1),
+                "percentage": score,
+                "rule_based_strength": rule_strength,
+                "ml_based_strength": ml_strength
             },
-            ml_based={
-                "score": round(ml_score, 1),
-                "max": 10,
-                "percentage": round(ml_score * 10, 1),
-            },
-            feedback=ai_feedback,  # <-- structured dict here
-            detailed_feedback=detailed_feedback
+            feedback=ai_feedback,
+            detailed_feedback={
+                q["id"]: f"Your answer: {q['options'][int_answers.get(q['id'], -1)]}. Correct: {q['options'][q['correct_index']]}"
+                for q in test.questions
+            }
         )
-
     except Exception as e:
         db.rollback()
-        logger.error(f"Evaluation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail="Evaluation failed due to invalid data")
-
+        logger.error(f"Evaluation failed: {e}")
+        raise HTTPException(status_code=400, detail=str(e))

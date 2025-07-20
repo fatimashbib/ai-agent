@@ -1,6 +1,6 @@
 import requests
 
-api_key = "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"
+api_key = "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"
 url = "https://openrouter.ai/api/v1/chat/completions"
 
 headers = {
@@ -31,7 +31,7 @@ Format as JSON with:
 """
 
 payload = {
-    "model": "qwen/qwen-2.5-72b-instruct:free",
+    "model": "openai/gpt-3.5-turbo",
     "messages": [
         {"role": "user", "content": CRITICAL_THINKING_PROMPT}
     ]

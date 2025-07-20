@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
 import './styles.css';
 
 export default function Assessment() {
@@ -12,8 +11,24 @@ export default function Assessment() {
   const [testId, setTestId] = useState(null);
   const [previousTests, setPreviousTests] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
-  const { token } = useAuth();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  const { token, user } = useAuth();
   const navigate = useNavigate();
+
+  const calculateTestDuration = (createdAt, completedAt) => {
+    if (!createdAt || !completedAt) return 'N/A';
+
+    const created = new Date(createdAt);
+    const completed = new Date(completedAt);
+    const durationMs = completed - created;
+
+    // Convert milliseconds to minutes and seconds
+    const minutes = Math.floor(durationMs / 60000);
+    const seconds = Math.floor((durationMs % 60000) / 1000);
+
+    return `${minutes}m ${seconds}s`;
+  };
 
   useEffect(() => {
     if (token) {
@@ -26,19 +41,32 @@ export default function Assessment() {
     return null;
   }
 
+  const toggleDropdown = () => setDropdownOpen(!dropdownOpen);
+
+  const logout = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+    }
+    navigate('/login');
+  };
+
+
   const fetchPreviousTests = async () => {
     try {
       const response = await fetch('http://localhost:8000/assessment/test-history', {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
       });
       if (!response.ok) throw new Error('Failed to fetch test history');
       const data = await response.json();
-      setPreviousTests(data.tests);
+
+      // No need to parse feedback as it's already an object
+      setPreviousTests(data.tests || []); // Ensure we always have an array
     } catch (err) {
       console.error('Failed to fetch test history:', err);
+      setPreviousTests([]); // Set empty array on error
     }
   };
 
@@ -48,9 +76,9 @@ export default function Assessment() {
       const response = await fetch('http://localhost:8000/assessment/generate-test', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
       if (!response.ok) throw new Error('Failed to generate test');
       const data = await response.json();
@@ -72,19 +100,17 @@ export default function Assessment() {
       const response = await fetch('http://localhost:8000/assessment/evaluate-test', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
-        credentials: 'include',
         body: JSON.stringify({
           test_id: testId,
-          answers: answers
-        })
+          answers: answers,
+        }),
       });
       if (!response.ok) throw new Error('Failed to submit test');
       const result = await response.json();
       setResults(result);
-      // Refresh the test history after submission
       await fetchPreviousTests();
     } catch (err) {
       console.error('Failed to submit test:', err);
@@ -96,12 +122,16 @@ export default function Assessment() {
   const viewTestResults = (test) => {
     setQuestions([]);
     setResults({
-      rule_based: { score: test.rule_based_score },
-      ml_based: { score: test.ml_based_score },
+      score: {
+        value: test.score,
+        percentage: test.score,
+        rule_based_strength: test.rule_based_strength,
+        ml_based_strength: test.ml_based_strength
+      },
       feedback: test.feedback || {
-        overview: "Previous test results",
+        overview: 'Previous test results',
         strengths: [],
-        improvements: []
+        improvements: [],
       }
     });
     setShowHistory(false);
@@ -110,25 +140,38 @@ export default function Assessment() {
   return (
     <div className="assessment-container">
       <div className="assessment-header">
-        <h1>Critical Thinking Assessment</h1>
-        <div className="action-buttons">
-          <button
-            onClick={() => {
-              setQuestions([]);
-              setResults(null);
-              setShowHistory(!showHistory);
-            }}
-            className="history-btn"
-          >
-            {showHistory ? 'Hide History' : 'Tests History'}
-          </button>
-          <button
-            onClick={generateTest}
-            disabled={loading}
-            className="generate-btn"
-          >
-            {loading ? 'Generating...' : 'New Test'}
-          </button>
+        <h1 className="header-title">Critical Thinking Assessment</h1>
+
+        <div className="header-controls">
+          <div className="action-buttons">
+            <button
+              onClick={() => {
+                setQuestions([]);
+                setResults(null);
+                setShowHistory(!showHistory);
+              }}
+              className="history-btn"
+            >
+              {showHistory ? 'Hide History' : 'Tests History'}
+            </button>
+            <button onClick={generateTest} disabled={loading} className="generate-btn">
+              {loading ? 'Generating...' : 'New Test'}
+            </button>
+          </div>
+
+          <div className="user-dropdown">
+            <button onClick={toggleDropdown} className="user-button">
+              {user?.email || 'User'} ▼
+            </button>
+            {dropdownOpen && (
+              <div className="dropdown-content">
+                <div className="user-email">{user?.email}</div>
+                <button onClick={logout} className="logout-btn">
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -142,15 +185,15 @@ export default function Assessment() {
               {previousTests.map((test, index) => (
                 <div key={test.id} className="test-card">
                   <h3>Test #{previousTests.length - index}</h3>
-                  <p>Date: {new Date(test.created_at).toLocaleString()}</p>
-                  <div className="test-scores">
-                    <span>Rule-Based: {test.rule_based_score.toFixed(1)}%</span>
-                    <span>AI-Evaluated: {test.ml_based_score.toFixed(1)}/10</span>
+                  <div className="test-meta">
+                    <p>Date: {new Date(test.created_at).toLocaleDateString()}</p>
+                    <p>Time taken: {calculateTestDuration(test.created_at, test.completed_at)}</p>
                   </div>
-                  <button
-                    onClick={() => viewTestResults(test)}
-                    className="view-results-btn"
-                  >
+                  <div className="test-scores">
+                    <span>Score: {test.score}/100</span>
+                    <span>Strength: {test.rule_based_strength}</span>
+                  </div>
+                  <button onClick={() => viewTestResults(test)} className="view-results-btn">
                     View Details
                   </button>
                 </div>
@@ -167,14 +210,14 @@ export default function Assessment() {
         <>
           <div className="questions-section">
             {questions.map((q, i) => (
-              <div key={i} className="question-card">
+              <div key={q.id} className="question-card">
                 <h3>Question {i + 1}: {q.text}</h3>
                 <div className="options">
                   {q.options.map((opt, j) => (
                     <label key={j} className="option">
                       <input
                         type="radio"
-                        name={`q${i}`}
+                        name={`q${q.id}`}
                         checked={answers[q.id] === j}
                         onChange={() => setAnswers({ ...answers, [q.id]: j })}
                       />
@@ -185,6 +228,7 @@ export default function Assessment() {
               </div>
             ))}
           </div>
+
           <button
             onClick={submitTest}
             disabled={loading || Object.keys(answers).length < questions.length}
@@ -200,14 +244,30 @@ export default function Assessment() {
           <h2>Your Results</h2>
           <div className="score-cards">
             <div className="score-card">
-              <h3>Rule-Based Score</h3>
-              <div className="score-value">{results.rule_based.score.toFixed(1)}%</div>
+              <h3>Overall Score</h3>
+              <div className="score-value">{results.score.value}/100</div>
             </div>
-            <div className="score-card">
-              <h3>AI-Evaluated Score</h3>
-              <div className="score-value">{results.ml_based.score.toFixed(1)}/10</div>
+
+            <div className="strength-cards">
+              <div className={`strength-card ${results.score.rule_based_strength.toLowerCase()}`}>
+                <h3>Rule-Based Evaluation</h3>
+                <div className="strength-value">
+                  {results.score.rule_based_strength}
+                </div>
+
+              </div>
+
+              <div className={`strength-card ${results.score.ml_based_strength.toLowerCase()}`}>
+                <h3>AI Evaluation</h3>
+                <div className="strength-value">
+                  {results.score.ml_based_strength}
+                </div>
+
+              </div>
             </div>
           </div>
+
+          {/* Rest of your feedback section remains the same */}
           {results.feedback && (
             <div className="feedback">
               <h3>Overview</h3>
@@ -215,22 +275,21 @@ export default function Assessment() {
 
               <h3>Strengths</h3>
               <ul>
-                {results.feedback.strengths.map((point, i) => <li key={i}>{point}</li>)}
+                {results.feedback.strengths.map((point, i) => (
+                  <li key={i}>{point}</li>
+                ))}
               </ul>
 
               <h3>Areas for Improvement</h3>
               <ul>
-                {results.feedback.improvements.map((point, i) => <li key={i}>{point}</li>)}
+                {results.feedback.improvements.map((point, i) => (
+                  <li key={i}>{point}</li>
+                ))}
               </ul>
             </div>
           )}
-          <button
-            onClick={generateTest}
-            disabled={loading}
-            className="generate-btn"
-          >
-            {loading ? 'Generating...' : 'Take Another Test'}
-          </button>
+
+
         </div>
       )}
     </div>

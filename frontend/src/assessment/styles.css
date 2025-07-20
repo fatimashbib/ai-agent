@@ -80,17 +80,56 @@
 }
 
 /* Add these to your existing styles.css */
+/* Add to your styles.css */
 .assessment-header {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
+  gap: 1rem;
   margin-bottom: 2rem;
+}
+
+.header-title {
+  text-align: center;
+  margin: 0;
+}
+
+.header-controls {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 800px; /* Adjust as needed */
+}
+
+.history-btn,
+.generate-btn,
+.user-button,
+.logout-btn,
+.view-results-btn,
+.submit-btn,
+.action-buttons {
+  white-space: nowrap;      /* Prevent text wrapping */
+  min-width: max-content;   /* Expand to fit content */
+  padding: 0.75rem 1.5rem;  /* Generous padding */
+  font-size: 1rem;          /* Consistent font size */
+  border-radius: 4px;       /* Match your design */
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;     /* Better for icon alignment */
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
 .action-buttons {
   display: flex;
-  gap: 1rem;
+  gap: 2rem;
 }
+
+.user-dropdown {
+  position: relative;
+}
+
 
 .test-history {
   margin-top: 2rem;
@@ -147,4 +186,58 @@
   gap: 2rem;
   justify-content: center;
   margin-bottom: 2rem;
+}
+
+/* Add to your styles.css */
+.strength-cards {
+  display: flex;
+  gap: 20px;
+  margin-top: 20px;
+  justify-content: center;
+}
+
+.strength-card {
+  padding: 20px;
+  border-radius: 10px;
+  width: 200px;
+  text-align: center;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.strength-card.strong {
+  background-color: #e6f7e6;
+  border: 2px solid #4CAF50;
+}
+
+.strength-card.moderate {
+  background-color: #fff9e6;
+  border: 2px solid #FFC107;
+}
+
+.strength-card.weak {
+  background-color: #ffebee;
+  border: 2px solid #F44336;
+}
+
+.strength-value {
+  font-size: 24px;
+  font-weight: bold;
+  margin: 10px 0;
+}
+
+.strength-card.strong .strength-value {
+  color: #4CAF50;
+}
+
+.strength-card.moderate .strength-value {
+  color: #FFC107;
+}
+
+.strength-card.weak .strength-value {
+  color: #F44336;
+}
+
+.strength-description {
+  font-size: 14px;
+  color: #555;
 }
