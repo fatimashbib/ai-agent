@@ -1,31 +1,62 @@
-FROM python:3.9-slim-bullseye
+# Stage 1: Builder
+FROM python:3.9-slim as builder
 
 WORKDIR /app
 
-# Create directories with proper permissions
-RUN mkdir -p /app/db && \
-    mkdir -p /app/scoring_models && \
-    chmod -R 777 /app/db && \
-    chmod -R 777 /app/scoring_models
-
-# Install system dependencies
+# Install build deps
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc python3-dev && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    libpq-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Configure pip for better reliability
+RUN python -m pip install --upgrade pip && \
+    pip config set global.retries 10 && \
+    pip config set global.timeout 60
+
+# Create and use virtualenv
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install DeepSeek SDK (if available) or prepare for API usage
-RUN pip install --no-cache-dir requests numpy scikit-learn joblib
+# Stage 2: Runtime
+FROM python:3.9-slim
 
-# Copy application code
-COPY . .
+WORKDIR /app
+
+# Install runtime deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libgomp1 \
+    libpq5 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy virtualenv
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create directory structure
+RUN mkdir -p /app/db /app/scoring_models && \
+    chmod -R 777 /app
+
+# Copy app code
+COPY --chown=1000:1000 . .
 
 # Environment variables
-ENV PYTHONPATH=/app
-ENV DATABASE_URL=sqlite:////app/db/ai-agent.db
-ENV DEEPSEEK_API_KEY=sk-c2f1f20e654441eb8ba47f51ce683c40
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    ML_MODEL_PATH=/app/scoring_models/strength_model.joblib \
+    DATABASE_URL=sqlite:////app/db/ai-agent.db
 
+USER 1000
+
+HEALTHCHECK --interval=30s --timeout=10s \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -4,6 +4,7 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from joblib import dump, load
 import pickle
 import os
+import time
 
 MODEL_PATH = "strength_model.joblib"
 SCALER_PATH = "strength_scaler.pkl"
@@ -12,11 +13,8 @@ LABEL_ENCODER_PATH = "label_encoder.pkl"
 class Scorer:
     def __init__(self):
         self.strength_evaluator = StrengthEvaluator()
-    
+
     def calculate_score(self, questions: list, answers: dict) -> float:
-        """
-        Calculate the test score based on correct answers
-        """
         correct = 0
         for q in questions:
             if q['id'] in answers and answers[q['id']] == q['correct_index']:
@@ -24,18 +22,13 @@ class Scorer:
         return (correct / len(questions)) * 100 if questions else 0
 
     def evaluate_strength(self, score: float, time_seconds: float) -> dict:
-        """
-        Evaluate strength using both rule-based and ML-based approaches
-        """
         return {
             "rule_based": self.strength_evaluator.predict_rule_strength(score, time_seconds),
             "ml_based": self.strength_evaluator.predict_ml_strength(score, time_seconds)
         }
 
-
 class StrengthEvaluator:
     def __init__(self):
-        # Load or train ML model for strength prediction
         if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH) and os.path.exists(LABEL_ENCODER_PATH):
             self.model = load(MODEL_PATH)
             with open(SCALER_PATH, 'rb') as f:
@@ -47,41 +40,55 @@ class StrengthEvaluator:
             self.model = RandomForestClassifier(random_state=42)
             self.scaler = StandardScaler()
             self.label_encoder = LabelEncoder()
-            self._initial_train()
 
-    def _initial_train(self):
-        # Example training data: [score, time_seconds]
-        X_train = np.array([
-            [85, 250],  # Strong
-            [75, 400],  # Moderate
-            [60, 550],  # Moderate
-            [40, 700],  # Weak
-            [90, 200],  # Strong
-            [55, 650],  # Weak
-            [70, 300],  # Moderate
-            [30, 800],  # Weak
-        ])
-        y_train = np.array([
-            "Strong",
-            "Moderate",
-            "Moderate",
-            "Weak",
-            "Strong",
-            "Weak",
-            "Moderate",
-            "Weak",
-        ])
+            start_time = time.time()
+            dataset_size = self._initial_train(start_time)
+            duration = time.time() - start_time
+
+            if duration <= 180:
+                dump(self.model, MODEL_PATH)
+                with open(SCALER_PATH, 'wb') as f:
+                    pickle.dump(self.scaler, f)
+                with open(LABEL_ENCODER_PATH, 'wb') as f:
+                    pickle.dump(self.label_encoder, f)
+                print(f"✅ Trained with {dataset_size} samples in {duration:.2f} seconds.")
+            else:
+                print(f"❌ Training took too long ({duration:.2f} seconds). Model not saved.")
+
+    def _initial_train(self, start_time):
+        X_train = []
+        y_train = []
+
+        def add_data(label, score_range, time_range, count):
+            for _ in range(count):
+                score = np.random.randint(score_range[0], score_range[1])
+                time_val = np.random.randint(time_range[0], time_range[1])
+                X_train.append([score, time_val])
+                y_train.append(label)
+
+        # Add Strong examples (score ≥ 80 and time ≤ 300)
+        add_data("Strong", (80, 101), (100, 301), 200)
+
+        # Add Moderate examples:
+        # Case 1: score between 50 and 79, time up to 600
+        add_data("Moderate", (50, 80), (250, 601), 150)
+        # Case 2: score ≥ 80 but time > 300 (should NOT be Strong)
+        add_data("Moderate", (80, 101), (301, 601), 100)
+
+        # Add Weak examples:
+        # Case 1: score < 50 and time > 500
+        add_data("Weak", (0, 50), (500, 901), 150)
+        # Case 2: score 50–79 and time > 600
+        add_data("Weak", (50, 80), (601, 901), 100)
+
+        X_train = np.array(X_train)
+        y_train = np.array(y_train)
 
         y_encoded = self.label_encoder.fit_transform(y_train)
         X_scaled = self.scaler.fit_transform(X_train)
         self.model.fit(X_scaled, y_encoded)
 
-        dump(self.model, MODEL_PATH)
-        with open(SCALER_PATH, 'wb') as f:
-            pickle.dump(self.scaler, f)
-        with open(LABEL_ENCODER_PATH, 'wb') as f:
-            pickle.dump(self.label_encoder, f)
-        print("Trained ML model and saved.")
+        return len(y_train)
 
     def predict_ml_strength(self, score: float, time_seconds: float) -> str:
         X = np.array([[score, time_seconds]])
@@ -90,14 +97,12 @@ class StrengthEvaluator:
         return self.label_encoder.inverse_transform([pred_encoded])[0]
 
     def predict_rule_strength(self, score: float, time_seconds: float) -> str:
-        # Simple fixed thresholds for rule-based strength
         if score >= 80 and time_seconds <= 300:
             return "Strong"
         elif score >= 50 and time_seconds <= 600:
             return "Moderate"
         else:
             return "Weak"
-
 
 if __name__ == "__main__":
     evaluator = StrengthEvaluator()

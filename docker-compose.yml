@@ -2,43 +2,36 @@ version: '3.8'
 
 services:
   backend:
-    build: 
+    build:
       context: ./backend
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
-      - db_data:/app/db
-      - model_data:/app/scoring_models  # For persisting ML models
+      - backend-db:/app/db       # Only mount the DB folder, NOT the whole code
     environment:
       - DATABASE_URL=sqlite:////app/db/ai-agent.db
-      - DEEPSEEK_API_KEY=sk-c2f1f20e654441eb8ba47f51ce683c40  # From .env file
+      - OPENROUTER_API_KEY=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
       - ML_MODEL_PATH=/app/scoring_models/scoring_model.joblib
-    working_dir: /app
+      - DEBUG=True
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "80:80"
+      - "3000:3000"
     volumes:
       - ./frontend:/app
-      - /app/node_modules  # Isolate node_modules
+      - /app/node_modules
     environment:
-      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_API_URL=http://backend:8000
+      - CHOKIDAR_USEPOLLING=true
+    command: npm start
     depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
+      - backend
 
 volumes:
-  db_data:
-  model_data:  # New volume for ML models
+  backend-db:
