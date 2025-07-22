@@ -64,6 +64,7 @@ export default function Login() {
 
   return (
     <div className="auth-form">
+   <h3 className="header-title">Critical Thinking Assessment 🧠</h3>
       <h2>Login</h2>
       {message.text && (
         <p style={{ color: message.isError ? 'red' : 'green' }}>{message.text}</p>

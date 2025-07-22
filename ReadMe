@@ -1,0 +1,123 @@
+# 📚 AI Agent Assessment Platform
+
+This project is a full-stack application for generating and scoring critical thinking assessments using OpenRouter AI APIs. It includes a **FastAPI backend**, a **React frontend**, and **Docker** for containerized deployment.
+
+---
+
+## 🚀 Tech Stack
+
+* **Frontend:** React
+* **Backend:** FastAPI (Python)
+* **ML Model:** `.joblib`-based scoring model
+* **Database:** SQLite (via Docker volume)
+* **AI Integration:** OpenRouter API
+* **Containerization:** Docker & Docker Compose
+
+---
+
+## 📆 Project Structure
+
+```
+project-root/
+│
+├── backend/
+│   ├── main.py
+│   ├── routes/
+│   ├── scoring_models/
+│   └── Dockerfile
+│
+├── frontend/
+│   ├── src/
+│   ├── public/
+│   └── Dockerfile
+│
+├── docker-compose.yml
+└── README.md
+```
+
+---
+
+## 🐳 Run the Project with Docker
+
+### 1. 🧰 Prerequisites
+
+* Docker
+* Docker Compose
+
+### 2. 🔑 Set Environment Variables (optional)
+
+Environment variables like `OPENROUTER_API_KEY` and `ML_MODEL_PATH` are already configured inside `docker-compose.yml`.
+
+### 3. ▶️ Start the app
+
+```bash
+docker-compose up --build
+```
+
+> This will:
+>
+> * Start the FastAPI backend on `http://localhost:8000`
+> * Start the React frontend on `http://localhost:3000`
+
+---
+
+## 📡 API Endpoint Overview (FastAPI)
+
+| Method | Endpoint                    | Description                          |
+| ------ | --------------------------- | ------------------------------------ |
+| POST   | `/assessment/generate-test` | Generate a new test using OpenRouter |
+| POST   | `/assessment/submit-test`   | Submit answers and get score         |
+| GET    | `/health`                   | Health check for the backend         |
+
+---
+
+## 📁 Environment Variables
+
+These are set in `docker-compose.yml`:
+
+```env
+OPENROUTER_API_KEY=your-key-here
+ML_MODEL_PATH=/app/scoring_models/scoring_model.joblib
+DATABASE_URL=sqlite:////app/db/ai-agent.db
+DEBUG=True
+```
+
+You can move these to an `.env` file and load them using `dotenv` if needed.
+
+---
+
+## 🧠 Scoring Model
+
+Make sure your model is available in:
+
+```
+backend/scoring_models/scoring_model.joblib
+```
+
+Update the path via `ML_MODEL_PATH` if needed.
+
+---
+
+## 🔍 Frontend (React)
+
+The frontend communicates with the backend via:
+
+```env
+REACT_APP_API_URL=http://backend:8000
+```
+
+It's configured in the `frontend` service of `docker-compose.yml`.
+
+---
+
+## ✅ Troubleshooting
+
+* ❗ **503 from OpenRouter**
+  Check if your model is available and chute ID is correct (or remove it and use a valid model ID like `openai/gpt-3.5-turbo`).
+
+* ❗ **Frontend not loading**
+  Make sure Docker volumes are working and React is served on port `3000`.
+
+---
+
+

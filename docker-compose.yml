@@ -11,7 +11,7 @@ services:
       - backend-db:/app/db       # Only mount the DB folder, NOT the whole code
     environment:
       - DATABASE_URL=sqlite:////app/db/ai-agent.db
-      - OPENROUTER_API_KEY=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
+      - OPENROUTER_API_KEY=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
       - ML_MODEL_PATH=/app/scoring_models/scoring_model.joblib
       - DEBUG=True
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
